@@ -1,3 +1,5 @@
-import {createWorld} from './actions.js';
+import {test2, test3} from './testmulti.js';
 
-export default createWorld;
+export default function test() {
+  console.log('test!');
+};
