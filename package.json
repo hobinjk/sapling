@@ -1,0 +1,14 @@
+{
+  "name": "sapling",
+  "version": "0.0.0",
+  "description": "Basic JS Bundler",
+  "main": "sapling.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "hobinjk@gmail.com",
+  "license": "MIT",
+  "dependencies": {
+    "recast": "^0.11.5"
+  }
+}
