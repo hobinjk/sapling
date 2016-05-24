@@ -7,6 +7,8 @@ var entryFileName = process.argv[2];
 var processedFiles = {};
 var topLevelAst = readAst(entryFileName);
 topLevelAst.program.body = addData(entryFileName, []);
+topLevelAst.program.body.splice(0, 0, makeScope(processedFiles));
+
 console.log(recast.print(topLevelAst).code);
 
 function readAst(fileName) {
@@ -112,14 +114,14 @@ function makeFunctionExpression(functionDeclaration) {
 }
 
 function makeAssignment(fileName, exportName, local) {
-  return [b.assignmentStatement('=', makeScope(fileName, exportName), makeAssignable(local))];
+  return [b.assignmentStatement('=', makeScopeRef(fileName, exportName), makeAssignable(local))];
 }
 
 function declarationName(declaration) {
   return declaration.id.name;
 }
 
-function makeScope(fileName, exportName) {
+function makeScopeRef(fileName, exportName) {
   return b.memberExpression(
     b.memberExpression(
       b.identifier('scope'),
@@ -130,8 +132,19 @@ function makeScope(fileName, exportName) {
 function makeImportNamed(localName, source, exportName) {
   return b.variableDeclaration('var', [
     b.variableDeclarator(
-      b.identifier(localName), makeScope(source, exportName))
+      b.identifier(localName), makeScopeRef(source, exportName))
   ]);
+}
+
+function makeScope(processedFiles) {
+  var objectContents = Object.keys(processedFiles).map(function(fileName) {
+    return b.property('init', b.literal(fileName), b.objectExpression([]));
+  });
+
+  return b.variableDeclaration('var', [
+    b.variableDeclarator(
+      b.identifier('scope'),
+      b.objectExpression(objectContents))]);
 }
 
 function resolvePath(originatingFileName, path) {
