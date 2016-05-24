@@ -30,7 +30,7 @@ function addData(fileName, output) {
   });
 
   // Combine this node's body with current body
-  output = output.concat(processOutput.body);
+  output = output.concat(makeWrap(processOutput.body));
 
   return output;
 }
@@ -151,6 +151,16 @@ function makeScope(processedFiles) {
     b.variableDeclarator(
       b.identifier('scope'),
       b.objectExpression(objectContents))]);
+}
+
+function makeWrap(body) {
+  return b.expressionStatement(b.callExpression(
+    b.functionExpression(
+      null,
+      [b.identifier('scope')],
+      b.blockStatement(body)
+    ),
+    [b.identifier('scope')]));
 }
 
 function resolvePath(originatingFileName, path) {
