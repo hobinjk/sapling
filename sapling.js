@@ -114,7 +114,13 @@ function makeFunctionExpression(functionDeclaration) {
 }
 
 function makeAssignment(fileName, exportName, local) {
-  return [b.assignmentStatement('=', makeScopeRef(fileName, exportName), makeAssignable(local))];
+  var scopeRef = makeScopeRef(fileName, exportName);
+  // Anonymous export
+  if (!local.id) {
+    return [b.assignmentStatement('=', scopeRef, makeAssignable(local))];
+  } else {
+    return [local, b.assignmentStatement('=', scopeRef, local.id)];
+  }
 }
 
 function declarationName(declaration) {
