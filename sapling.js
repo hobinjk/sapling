@@ -19,15 +19,16 @@ function addData(fileName, output) {
   var ast = readAst(fileName);
   var processOutput = processProgram(fileName, ast.program);
 
-  // Combine newAst with topLevelAst
-  output = output.concat(processOutput.body);
-
+  // Ensure that all imported code exists in the output body
   processOutput.imports.forEach(function(importSource) {
     var importPath = resolvePath(fileName, importSource);
     if (!processedFiles[importPath]) {
       output = addData(importPath, output);
     }
   });
+
+  // Combine this node's body with current body
+  output = output.concat(processOutput.body);
 
   return output;
 }
