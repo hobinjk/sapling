@@ -6,7 +6,7 @@ var entryFileName = process.argv[2];
 
 var processedFiles = {};
 var topLevelAst = readAst(entryFileName);
-topLevelAst.program.body = addData(entryFileName, []);
+topLevelAst.program.body = addData(entryFileName, [], {'default': true});
 topLevelAst.program.body.splice(0, 0, makeScope(processedFiles));
 
 console.log(recast.print(topLevelAst).code);
@@ -16,18 +16,22 @@ function readAst(fileName) {
   return recast.parse(source);
 }
 
-function addData(fileName, output) {
+function addData(fileName, output, usedImports) {
   processedFiles[fileName] = true;
   var ast = readAst(fileName);
-  var processOutput = processProgram(fileName, ast.program);
+  var processOutput = processProgram(fileName, ast.program, usedImports);
 
   // Ensure that all imported code exists in the output body
-  processOutput.imports.forEach(function(importSource) {
+  for (var importSource in processOutput.imports) {
+    if (!processOutput.imports.hasOwnProperty(importSource)) {
+      continue;
+    }
+    var usedImports = processOutput.imports[importSource];
     var importPath = resolvePath(fileName, importSource);
     if (!processedFiles[importPath]) {
-      output = addData(importPath, output);
+      output = addData(importPath, output, usedImports);
     }
-  });
+  }
 
   // Combine this node's body with current body
   output = output.concat(makeWrap(processOutput.body));
@@ -35,9 +39,10 @@ function addData(fileName, output) {
   return output;
 }
 
-function processProgram(fileName, program) {
-  var imports = [];
+function processProgram(fileName, program, usedImports) {
+  var imports = {};
   var newBody = [];
+
   program.body.forEach(function(node) {
     switch (node.type) {
     case 'ExportDefaultDeclaration':
@@ -46,7 +51,7 @@ function processProgram(fileName, program) {
       break;
     case 'ExportNamedDeclaration':
       if (node.declaration) {
-        newBody = newBody.concat(makeExport(fileName, node.declaration));
+        newBody = newBody.concat(makeExport(fileName, node.declaration, usedImports));
       } else if (node.specifiers) {
         node.specifiers.forEach(function(spec) {
           newBody = newBody.concat(makeAssignment(fileName, spec.exported.name, spec.local));
@@ -57,15 +62,16 @@ function processProgram(fileName, program) {
       node.specifiers.forEach(function(spec) {
         var localName = spec.local.name;
         var source = node.source.value;
-        imports.push(source);
-        switch (spec.type) {
-          case 'ImportDefaultSpecifier':
-            newBody = newBody.concat(makeImportNamed(localName, source, 'default'));
-            break;
-          case 'ImportSpecifier':
-            newBody = newBody.concat(makeImportNamed(localName, source, localName));
-            break;
+        var remoteName = localName;
+        if (spec.type === 'ImportDefaultSpecifier') {
+          remoteName = 'default';
         }
+
+        if (!imports[source]) {
+          imports[source] = {};
+        }
+        imports[source][remoteName] = true;
+        newBody = newBody.concat(makeImportNamed(localName, source, remoteName));
       });
       break;
     default:
@@ -83,17 +89,23 @@ function processProgram(fileName, program) {
 // Export: scope[source].name = local
 // Import: local = scope[source].name
 
-function makeExport(fileName, declaration) {
+function makeExport(fileName, declaration, usedImports) {
   switch (declaration.type) {
   case 'VariableDeclaration':
     var output = [declaration];
     declaration.declarations.forEach(function(decl) {
       var declName = declarationName(decl);
-      output = output.concat(makeAssignment(fileName, declName, decl.init || decl.id));
+      if (usedImports[declName] || usedImports.default) {
+        output = output.concat(makeAssignment(fileName, declName, decl.init || decl.id));
+      }
     });
     return output;
   case 'FunctionDeclaration':
-    return makeAssignment(fileName, declarationName(declaration), declaration);
+    if (usedImports[declarationName(declaration)] || usedImports.default) {
+      return makeAssignment(fileName, declarationName(declaration), declaration);
+    } else {
+      return [];
+    }
   }
 }
 
