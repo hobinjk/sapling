@@ -104,7 +104,7 @@ function makeExport(fileName, declaration, usedImports) {
     if (usedImports[declarationName(declaration)] || usedImports.default) {
       return makeAssignment(fileName, declarationName(declaration), declaration);
     } else {
-      return [];
+      return [declaration];
     }
   }
 }
