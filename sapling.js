@@ -1,13 +1,33 @@
 var recast = require('recast');
 var b = recast.types.builders;
+
 var fs = require('fs');
 
 var entryFileName = process.argv[2];
 
-var processedFiles = {};
+// Rewrite the entry file's AST to preserve style
 var topLevelAst = readAst(entryFileName);
-topLevelAst.program.body = addData(entryFileName, [], {'default': true});
-topLevelAst.program.body.splice(0, 0, makeScope(processedFiles));
+
+var requiredExports = {};
+var order = readRequiredExports(entryFileName, requiredExports);
+console.log(order);
+console.log(requiredExports);
+
+var newBody = [];
+var rewritten = {};
+
+for (var i = order.length - 1; i > -1; i--) {
+  var fileName = order[i];
+  if (rewritten[fileName]) {
+    continue;
+  }
+  newBody = newBody.concat(rewriteFile(fileName, requiredExports));
+  rewritten[fileName] = true;
+}
+
+topLevelAst.program.body = newBody;
+
+topLevelAst.program.body.splice(0, 0, makeScope(rewritten));
 
 console.log(recast.print(topLevelAst).code);
 
@@ -16,31 +36,60 @@ function readAst(fileName) {
   return recast.parse(source);
 }
 
-function addData(fileName, output, usedImports) {
-  processedFiles[fileName] = true;
+function readRequiredExports(fileName, requiredExports) {
   var ast = readAst(fileName);
-  var processOutput = processProgram(fileName, ast.program, usedImports);
+  var localImports = readProgramImports(ast.program);
+  var order = [fileName];
 
-  // Ensure that all imported code exists in the output body
-  for (var importSource in processOutput.imports) {
-    if (!processOutput.imports.hasOwnProperty(importSource)) {
+  for (var child in localImports) {
+    if (!localImports.hasOwnProperty(child)) {
       continue;
     }
-    var usedImports = processOutput.imports[importSource];
-    var importPath = resolvePath(fileName, importSource);
-    if (!processedFiles[importPath]) {
-      output = addData(importPath, output, usedImports);
+    if (!requiredExports[child]) {
+      requiredExports[child] = {};
     }
+    Object.assign(requiredExports[child], localImports[child]);
+    order = order.concat(readRequiredExports(child, requiredExports));
   }
-
-  // Combine this node's body with current body
-  output = output.concat(makeWrap(processOutput.body));
-
-  return output;
+  return order;
 }
 
-function processProgram(fileName, program, usedImports) {
+function readProgramImports(program) {
   var imports = {};
+
+  program.body.forEach(function(node) {
+    switch (node.type) {
+    case 'ImportDeclaration':
+      node.specifiers.forEach(function(spec) {
+        var localName = spec.local.name;
+        var source = node.source.value;
+        var remoteName = localName;
+        if (spec.type === 'ImportDefaultSpecifier') {
+          remoteName = 'default';
+        }
+
+        if (!imports[source]) {
+          imports[source] = {};
+        }
+        imports[source][remoteName] = true;
+      });
+      break;
+    default:
+      break;
+    }
+  });
+
+  return imports;
+}
+
+function rewriteFile(fileName, requiredImports) {
+  var ast = readAst(fileName);
+  var body = rewriteProgram(fileName, ast.program, requiredImports[fileName]);
+
+  return makeWrap(body);
+}
+
+function rewriteProgram(fileName, program, requiredImports) {
   var newBody = [];
 
   program.body.forEach(function(node) {
@@ -51,7 +100,7 @@ function processProgram(fileName, program, usedImports) {
       break;
     case 'ExportNamedDeclaration':
       if (node.declaration) {
-        newBody = newBody.concat(makeExport(fileName, node.declaration, usedImports));
+        newBody = newBody.concat(makeExport(fileName, node.declaration, requiredImports));
       } else if (node.specifiers) {
         node.specifiers.forEach(function(spec) {
           newBody = newBody.concat(makeAssignment(fileName, spec.exported.name, spec.local));
@@ -67,10 +116,6 @@ function processProgram(fileName, program, usedImports) {
           remoteName = 'default';
         }
 
-        if (!imports[source]) {
-          imports[source] = {};
-        }
-        imports[source][remoteName] = true;
         newBody = newBody.concat(makeImportNamed(localName, source, remoteName));
       });
       break;
@@ -80,28 +125,25 @@ function processProgram(fileName, program, usedImports) {
     }
   });
 
-  return {
-    body: newBody,
-    imports: imports
-  };
+  return newBody;
 }
 
 // Export: scope[source].name = local
 // Import: local = scope[source].name
 
-function makeExport(fileName, declaration, usedImports) {
+function makeExport(fileName, declaration, requiredImports) {
   switch (declaration.type) {
   case 'VariableDeclaration':
     var output = [declaration];
     declaration.declarations.forEach(function(decl) {
       var declName = declarationName(decl);
-      if (usedImports[declName] || usedImports.default) {
+      if (requiredImports[declName] || requiredImports.default) {
         output = output.concat(makeAssignment(fileName, declName, decl.init || decl.id));
       }
     });
     return output;
   case 'FunctionDeclaration':
-    if (usedImports[declarationName(declaration)] || usedImports.default) {
+    if (requiredImports[declarationName(declaration)] || requiredImports.default) {
       return makeAssignment(fileName, declarationName(declaration), declaration);
     } else {
       return [declaration];
@@ -154,8 +196,8 @@ function makeImportNamed(localName, source, exportName) {
   ]);
 }
 
-function makeScope(processedFiles) {
-  var objectContents = Object.keys(processedFiles).map(function(fileName) {
+function makeScope(requiredFiles) {
+  var objectContents = Object.keys(requiredFiles).map(function(fileName) {
     return b.property('init', b.literal(fileName), b.objectExpression([]));
   });
 
